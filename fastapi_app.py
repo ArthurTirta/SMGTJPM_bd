@@ -4,6 +4,7 @@ FastAPI Application for Jeans Product Database with AI Chat
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.main import router as ai_router
+from app.api.products import router as products_router
 from app.database import engine, Base
 from app.core.config import settings
 
@@ -29,6 +30,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(ai_router, prefix=f"{settings.API_V1_STR}/ai", tags=["AI"])
+app.include_router(products_router, prefix=f"{settings.API_V1_STR}/products", tags=["Products"])
 
 
 @app.get("/")

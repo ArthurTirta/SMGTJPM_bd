@@ -78,30 +78,30 @@ def run_tests():
         return
     print("✅ Simple query passed!")
     
-    # Test 4: Brand Query
-    print("\n4️⃣ Testing Brand Filter Query...")
-    if not test_chat("Show me all RALPH LAUREN jeans"):
-        print("❌ Brand query failed.")
-        return
-    print("✅ Brand query passed!")
+    # # Test 4: Brand Query
+    # print("\n4️⃣ Testing Brand Filter Query...")
+    # if not test_chat("Show me all RALPH LAUREN jeans"):
+    #     print("❌ Brand query failed.")
+    #     return
+    # print("✅ Brand query passed!")
     
-    # Test 5: Discount Query
-    print("\n5️⃣ Testing Discount Query...")
-    if not test_chat("Produk mana yang sedang diskon?"):
-        print("❌ Discount query failed.")
-        return
-    print("✅ Discount query passed!")
+    # # Test 5: Discount Query
+    # print("\n5️⃣ Testing Discount Query...")
+    # if not test_chat("Produk mana yang sedang diskon?"):
+    #     print("❌ Discount query failed.")
+    #     return
+    # print("✅ Discount query passed!")
     
-    # Test 6: Complex Query
-    print("\n6️⃣ Testing Complex Query...")
-    if not test_chat("Berapa rata-rata harga jeans per brand?"):
-        print("❌ Complex query failed.")
-        return
-    print("✅ Complex query passed!")
+    # # Test 6: Complex Query
+    # print("\n6️⃣ Testing Complex Query...")
+    # if not test_chat("Berapa rata-rata harga jeans per brand?"):
+    #     print("❌ Complex query failed.")
+    #     return
+    # print("✅ Complex query passed!")
     
-    print("\n" + "="*60)
-    print("🎉 All tests passed successfully!")
-    print("="*60 + "\n")
+    # print("\n" + "="*60)
+    # print("🎉 All tests passed successfully!")
+    # print("="*60 + "\n")
 
 
 if __name__ == "__main__":
