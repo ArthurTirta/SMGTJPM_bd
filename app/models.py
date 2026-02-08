@@ -26,3 +26,4 @@ class Jean(Base):
     description = Column(Text)
     style_attributes = Column(JSON)  # Store as JSON object
     pdp_images_s3 = Column(JSON)  # Store as JSON array
+    images_minio = Column(JSON)  # Store list of MinIO keys/filenames

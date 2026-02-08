@@ -1,5 +1,10 @@
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Depends
+import base64
+import io
+import uuid
+import urllib.request
+from fastapi import APIRouter, HTTPException, Depends, File, Form, UploadFile
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from google import genai
 from google.genai import types
@@ -11,8 +16,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 from app.core.config import settings
 from app.api.deps import get_db
+from app.core import minio_utils
 from dotenv import load_dotenv
 from rich import print as rprint
+from PIL import Image
+
 
 load_dotenv(override=True)
 
@@ -362,6 +370,7 @@ def test():
 
 @router.post('/chat', response_model=ChatResponse, tags=["AI"])
 def get_response(request: ChatRequest, db: Session = Depends(get_db)):
+
     """
     Send a message and get an AI-generated response with optional navigation buttons.
     
@@ -475,3 +484,107 @@ def get_response(request: ChatRequest, db: Session = Depends(get_db)):
     finally:
         _db_session = None
         final_text = {}  # Reset after response
+
+@router.post("/tryon")
+async def tryon(
+    product_image_key: str = Form(..., description="MinIO object key gambar produk (dari bucket)"),
+    user_image: UploadFile = File(..., description="Gambar pengguna (foto orang)"),
+):
+    """
+    Virtual try-on: gambar produk dari MinIO + foto pengguna → LLM generate foto pengguna memakai produk.
+    Hasil disimpan ke MinIO (prefix tryon/) untuk history.
+    """
+    if not API_KEY:
+        raise HTTPException(status_code=500, detail="GOOGLE_API_KEY tidak diatur")
+    if not user_image.content_type or not user_image.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="user_image harus berupa gambar (image/*)")
+    # 1. Ambil gambar produk: dari URL (http/https) atau dari MinIO
+    product_bytes = None
+    key_stripped = (product_image_key or "").strip()
+    if key_stripped.startswith("http://") or key_stripped.startswith("https://"):
+        async def _fetch_url(url: str) -> bytes:
+            def _get():
+                with urllib.request.urlopen(url, timeout=30) as resp:
+                    return resp.read()
+            return await run_in_threadpool(_get)
+        try:
+            product_bytes = await _fetch_url(key_stripped)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Gagal mengambil gambar dari URL: {e}")
+    else:
+        stream, _ = minio_utils.get_file_stream(key_stripped)
+        if stream is None:
+            raise HTTPException(status_code=404, detail=f"Gambar produk tidak ditemukan: {product_image_key}")
+        try:
+            product_bytes = stream.read()
+        finally:
+            stream.close()
+    if not product_bytes:
+        raise HTTPException(status_code=404, detail="Gambar produk kosong")
+    try:
+        product_image = Image.open(io.BytesIO(product_bytes)).convert("RGB")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Gambar produk tidak valid: {e}")
+    # 2. Ambil gambar pengguna dari upload
+    user_bytes = await user_image.read()
+    try:
+        user_image_pil = Image.open(io.BytesIO(user_bytes)).convert("RGB")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Gambar pengguna tidak valid: {e}")
+    # 3. Prompt: orang di gambar pertama, pakaian/produk di gambar kedua
+    prompt = (
+        "The first image is a person. The second image is a clothing/product. "
+        "Generate a single realistic image of the same person from the first image wearing or using "
+        "the product from the second image. Keep the person's face, body pose and identity unchanged. "
+        "The product should look naturally worn or placed. Output only the generated image."
+    )
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-image",
+            contents=[prompt, user_image_pil, product_image],
+            config=types.GenerateContentConfig(
+                response_modalities=["TEXT", "IMAGE"],
+            ),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Gemini image generation gagal: {str(e)}")
+    # 4. Ambil gambar dari response (bisa response.parts atau candidates[0].content.parts)
+    out_pil = None
+    image_part = None
+    parts = getattr(response, "parts", None)
+    if parts is None and response.candidates:
+        content = response.candidates[0].content
+        parts = getattr(content, "parts", None)
+    if parts:
+        for part in parts:
+            if getattr(part, "inline_data", None) is not None:
+                image_part = part
+                try:
+                    out_pil = part.as_image()
+                    break
+                except Exception:
+                    pass
+    if out_pil is None and image_part is None:
+        raise HTTPException(status_code=502, detail="Gemini tidak mengembalikan gambar")
+    # 5. Ambil raw bytes (genai part.as_image() bukan PIL; .save() hanya terima path)
+    buf = io.BytesIO()
+    if out_pil is not None and hasattr(out_pil, "image_bytes"):
+        buf.write(out_pil.image_bytes)
+    elif image_part is not None:
+        raw = getattr(image_part.inline_data, "data", None)
+        if raw is None:
+            raise HTTPException(status_code=502, detail="Gambar hasil tidak memiliki data")
+        if isinstance(raw, bytes):
+            buf.write(raw)
+        else:
+            buf.write(base64.b64decode(raw))
+    else:
+        raise HTTPException(status_code=502, detail="Gambar hasil tidak dapat dibaca")
+    buf.seek(0)
+    result_key = f"tryon/{uuid.uuid4().hex}.png"
+    minio_utils.upload_file(buf, "image/png", key=result_key)
+    return {
+        "success": True,
+        "result_key": result_key,
+        "message": "Hasil try-on disimpan di MinIO",
+    }
